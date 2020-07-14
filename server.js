@@ -40,7 +40,7 @@ app.get('/location', loc)
 
 function loc(req, res) {
   const city = req.query.city;
-  let q =`SELECT * FROM locations WHERE search_query =$1;`
+  let q =`SELECT * FROM LOCATIONS WHERE search_query =$1;`
   let safevalues=[city];
   console.log('///////////////////////////',city)
   notclint.query(q,safevalues)
