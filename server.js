@@ -1,212 +1,314 @@
-'use strict'
+'use strict';
 
-
-/* this is librarys*/
-////////////////////////////////////
-/* dotenv */
-require('dotenv').config();
-
-/*express  */
 const express = require('express');
-
-/* who can touch my server */
+require('dotenv').config();
 const cors = require('cors');
-
-/* superagent */
 const superagent = require('superagent');
-
-/* pg */
 const pg = require('pg');
-// const { saveCookies } = require('superagent');
 
-const notclint = new pg.Client(process.env.DBU_RL);
-
-/////////////////////////////////////
-
-/*for get the port number if it not there it will take(3196) */
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT;
 
 const app = express();
-
-/*that mean any one can use my server(its will be open to every body) */
+const client = new pg.Client(process.env.DATABASE_URL);
+// console.log(app);
 app.use(cors());
 
 app.get('/', (req, res) => {
-  res.status(200).send('it is work berfectlly')
-});
-
-/* http://localhost:3642/location?data=Lunnwood  */
-app.get('/location', loc)
-
-function loc(req, res) {
-  const city = req.query.city;
-  let q =`SELECT * FROM LOCATIONS WHERE search_query =$1;`
-  let safevalues=[city];
-  console.log('///////////////////////////',city)
-  notclint.query(q,safevalues)
-    .then(dbdata=>{
-    // console.log(dbdata);
-      if(dbdata.rows.length==0){
-        // const locationData = require('./data/ location.json');
-        // const locaData = new Location(city, locationData);
-        let key = process.env.LOCATIONIQ_KEY;
-        let url = `https://eu1.locationiq.com/v1/search.php?key=${key}&q=${city}&format=json`;
-        superagent.get(url)
-          .then(geoData => {
-            // console.log(geoData);
-            // console.log(geoData.body);
-            const locationData = new Location(city, geoData.body);
-            // console.log(locationData);
-            let q = `INSERT INTO locations(search_query,formatted_query,latitude,longitude) VALUES ($1, $2, $3, $4);`
-            let safevalues =[locationData.search_query,locationData.formatted_query,locationData.latitude,locationData.longitude];
-            notclint.query(q,safevalues)
-            // console.log('this from apis');
-            res.status(200).json(locationData);
-          });
-        // console.log('after superagent');
-      }else{
-        // console.log('this from db');
-        res.status(200).send(dbdata.rows[0]);
-      }
-    })
-}
-
-var ahmad=[];
-function Location(city, locationData) {
-  this.search_query = city;
-  this.formatted_query = locationData[0].display_name;
-  this.latitude = locationData[0].lat;
-  this.longitude = locationData[0].lon;
-  ahmad.push(this);
-}
-
-
-
-app.get('/weather', (req, res) => {
-  // const weatherData = require('./data/weather.json');
-  // const nWeather = weatherData.data;
-
-  let key = process.env.WEATHER_KEY;
-  let url = `https://api.weatherbit.io/v2.0/forecast/daily?lat=${req.query.latitude}&lon=${req.query.longitude}&key=${key}`;
-
-  console.log(url);
-
-  superagent.get(url)
-    .then(weatherData => {
-      // console.log('inside superagent');
-      // console.log(geoData.body);
-      var notArrResult = [];
-      // console.log(weatherData.data)
-      // res.send(weatherData.body.data);
-
-      weatherData.body.data.forEach((element,idx) => {
-        if(idx < 8){
-          let notResult= new Weather(element);
-          notArrResult.push(notResult);
-
-        }else{
-          // console.log(idx)
-        }
-        // console.log(locationData);
-      });
-      res.status(200).json(notArrResult);
-    });
+    res.status(200).send('you did great!!');
 });
 
 
-// var notArrResult=[];
-// console.log(weatherData.data)
-// weatherData.data.forEach(element => {
-//   let notResult= new Weather( element);
-//   notArrResult.push(notResult);
-//   console.log(notResult);
-// });
-// res.status(200).send(notArrResult);
+////////////////////////Location//////////////////////////
+// http://localhost:3000/location?data=amman
+// https://eu1.locationiq.com/v1/search.php?key=f7076ae695ed67&q=amman&format=json
+app.get('/location', locationHandler);
+
+function locationHandler(request, response) {
+
+    let city = request.query.city;
+    // let locationData = getLocation(city);
+    // console.log('11111111111111111111111111111111',locationData);
+    // response.status(200).json(locationData);
+    getLocation(city)
+        .then(locationData => {
+            // console.log('hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh',locationData);
+            response.status(200).json(locationData);
+        });
+}
 
 
-function Weather(weatherData) {
-  this.forecast = weatherData.weather.description;
-  this.time = new Date(weatherData.datetime).toDateString();
+function getLocation(city) {
+
+    let SQL = 'SELECT * FROM locations WHERE search_query=$1';
+    console.log('dddddddddddddddddddddddddddddddddddddddd', SQL);
+    let values = [city];
+    return client.query(SQL, values) //will return promise
+        .then(results => {
+            //results.count -> it will NOT work
+            //results.rowCount -> it will work
+            
+            if (results.rows.length) { 
+                console.log('already exist');
+                return results.rows[0]; }
+            else {
+                // console.log('eeeeeeeeeeeeeeeeeeeeee');
+                let key = process.env.GEOCODE_API_KEY;
+                const url = `https://eu1.locationiq.com/v1/search.php?key=${key}&q=${city}&format=json&limit=1`;
+                return superagent.get(url)
+                    .then(data => {
+                        // console.log('22222222222222222222222222222222',data);
+                        // console.log('33333333333333333333333333333333',data.body[0]);
+                        return cachedLocation(city, data.body[0]);
+                    });
+            }
+        })
+}
+
+function cachedLocation(city, info) {
+    // console.log('eeeeeeeeeeeeeeeeeeeeee',info);
+    var newLocation = new Location(city, info);
+    let SQL = 'INSERT INTO locations (search_query, formatted_query,latitude,longitude) VALUES ($1, $2, $3, $4) RETURNING *';
+    let safeValues = [city, newLocation.formatted_query, newLocation.latitude, newLocation.longitude];
+    return client.query(SQL, safeValues)
+        .then(results => results.rows[0]);
+}
+
+function Location(city, geoData) {
+    // console.log('ccccccccccccccccc/ccccccccccccc',geoData);
+    this.search_query = city;
+    this.formatted_query = geoData.display_name;
+    this.latitude = geoData.lat;
+    this.longitude = geoData.lon;
+}
+
+
+///////////////////////////Weather//////////////////////////////
+// http://localhost:3000/weather?latitude=31.9515694&longitude=35.9239625
+// https://api.darksky.net/forecast/d530359b605f76279985a735c3832fcd/31.9515694,35.9239625
+app.get('/weather', weatherHandler);
+
+function weatherHandler(request, response) {
+    const latitude = request.query.latitude;
+    const longitude = request.query.longitude;
+    getWeather(latitude, longitude)
+        .then(weatherData => response.status(200).json(weatherData));
+}
+
+function getWeather(latitude, longitude) {
+    const key = process.env.WEATHER_API_KEY;
+    const url = `https://api.darksky.net/forecast/${key}/${latitude},${longitude}`;
+    var weatherDaily = [];
+
+    return superagent(url)
+        .then(geoData => {
+            geoData.body.daily.data.forEach(val => {
+                var weatherData = new Weather(val);
+                weatherDaily.push(weatherData);
+            });
+            return weatherDaily;
+        })
 
 }
 
-// ////////////////////
-// app.get('/trails', (req, res) => {
+function Weather(day) {
+    this.forecast = day.summary;
+    this.time = new Date(day.time * 1000).toString().slice(0, 15);
+    // this.time = new Date(day.time*1000).toDateString();
 
-//   let key = process.env.TRAILS_KEY;
-//   let url = `http://www.hikingproject.com/data/get-trails?lat=${req.query.latitude}&lon=${req.query.longitude}&maxDistance=10&key=${key}`;
+}
 
-//   superagent.get(url)
-//     .then(trailsData => {
-//       let arr = trailsData.body.trails.map(element => {
-//         let rR= new Trails(element);
-//         return rR;
-//       });
-//       res.status(200).json(arr);
+
+////////////////////Trail////////////////////
+// from here https://www.hikingproject.com/data
+// http://localhost:3000/trails?latitude=31.9515694&longitude=35.9239625
+// https://www.hikingproject.com/data/get-trails?lat=40.0274&lon=-105.2519&maxDistance=10&key=200713907-ad9541d779b6bd8ec1279919d09c6ad2
+app.get('/trails', trailsHandler);
+
+function trailsHandler(request, response) {
+    let city = request.query.city;
+    let latitude = request.query.latitude;
+    let longitude = request.query.longitude;
+    getTrails(latitude, longitude)
+        .then(trailsData => {
+            response.status(200).json(trailsData);
+        });
+}
+
+function getTrails(latitude, longitude) {
+    let key = process.env.TRAILS_API_KEY;
+    const url = `https://www.hikingproject.com/data/get-trails?lat=${latitude}&lon=${longitude}&maxDistance=10&key=${key}`;
+    var trialDaily = [];
+    return superagent.get(url)
+        .then(trailsVal => {
+            console.log('ffffffffffffffffffffffff', trailsVal.body);
+            // trailsVal.body.trails.map(trail => {
+            //     return new Trail(trail);
+            // })
+            trailsVal.body.trails.forEach(val => {
+                var trialData = new Trail(val);
+                trialDaily.push(trialData);
+            });
+            return trialDaily;
+        })
+}
+
+function Trail(trail) {
+    this.tableName = 'trails';
+    this.name = trail.name;
+    this.location = trail.location;
+    this.length = trail.length;
+    this.stars = trail.stars;
+    this.star_votes = trail.starVotes;
+    this.summary = trail.summary;
+    this.trail_url = trail.url;
+    this.conditions = trail.conditionDetails;
+    this.condition_date = trail.conditionDate.slice(0, 10);
+    this.condition_time = trail.conditionDate.slice(12);
+    this.created_at = Date.now();
+}
+
+
+
+////////////////////Movie////////////////////
+app.get('/movies', moviesHandler);
+
+
+function moviesHandler(request, response) {
+    let city = request.query.search_query;
+    getMovies(city)
+        .then(moviesData => {
+            response.status(200).json(moviesData);
+        });
+}
+
+function getMovies(city) {
+    let key = process.env.MOVIES_API_KEY;
+    const url = `https://api.themoviedb.org/3/search/movie?api_key=${key}&query=${city}&language=de-DE&region=DE`;
+    return superagent.get(url)
+        .then(moviesVal => {
+            let movieDaily= moviesVal.body.results.map(val => {
+                return new Movie(val);
+            });
+            return movieDaily;
+        })
+}
+
+function Movie(val) {
+    this.title = val.title;
+    this.overview = val.overview;
+    this.average_votes = val.vote_average;
+    this.total_votes = this.vote_count;
+    this.image_url = val.poster_path;
+    // this.image_url =`https://image.tmdb.org/t/p/w500/${val.poster_path}`;
+    this.popularity = val.popularity;
+    this.released_on = val.release_date;
+}
+
+
+////////////////////YELP////////////////////
+app.get('/yelp', yelpHandler);
+
+
+function yelpHandler(request, response) {
+    let city = request.query.search_query;
+    getYelp(city)
+        .then(yelpData => {
+            response.status(200).json(yelpData);
+        });
+}
+
+function getYelp(city) {
+    let key = process.env.YELP_API_KEY;
+    const url = `https://api.yelp.com/v3/businesses/search?location=${city}`;
+    return superagent.get(url)
+        .set('Authorization', `Bearer ${key}`)
+        .then(yelpVal => {
+            let yelpDaily= yelpVal.body.businesses.map(val => {
+                return new Yelp(val);
+            });
+            return yelpDaily;
+        })
+}
+
+function Yelp(val) {
+    this.name = val.name;
+    this.image_url = val.image_url;
+    this.price = val.price;
+    this.rating = val.rating;
+    this.url= val.url;
+}
+
+
+
+
+// app.get('/weather', (req,res)=> {
+//     const geoData = require('./data/darksky.json');
+//     console.log(geoData);
+//     var weatherDaily =[];
+//     geoData.daily.data.forEach(val =>{
+//         var weatherData = new Weather(val);
+//         weatherDaily.push(weatherData);
 //     });
+//     res.send(weatherDaily);
 // });
 
-// function Trails(trailsData) {
-//   this.name = trailsData.name;
-//   this.location = trailsData.location;
-//   this.length = trailsData.length;
-//   this.stars = trailsData.stars;
-//   this.star_votes = trailsData.starVotes;
-//   this.summary = trailsData.summary;
-//   this.trail_url = trailsData.url;
-//   this.conditions = trailsData.conditionStatus;
-//   this.condition_date = new Date(trailsData.conditionDate).toDateString();
-//   this.condition_time = new Date(trailsData.conditionDate).toTimeString();
+// function Weather(day) {
+//     this.forecast = day.summary;
+//     this.time = new Date(day.time).toString().slice(0,15);
 // }
 
-// // app.get('/yelp',yul)
 
-// // function yul(req,res){
+// http://localhost:3000/location?data=amman
+/////////////////geo.json//////////////////////
+// app.get('/location',(req,res)=> {
+//     const geoData = require('./data/geo.json');
+//     const city = req.query.data;
+//     // console.log(city);
+//     // console.log(geoData)
+//     let locationData = new Location (city,geoData);
+//     res.send(locationData);
 
-
-// //   let key = process.env.YELP_KEY;
-
-// //   let url= `https://api.yelp.com/v3/businesses/search?latitude=${req.query.latitude}&longitude=${req.query.longitude}`
-// //   superagent.get(url)
-// //     .set({'Authorization': `Bearer ${key}`})
-// //     .then(yelpData=>{
-// //       let myYelp = yelpData.body.businesses.map(ele=>{
-// //         return new Yelp(ele);
-// //       })
-// //       res.status(200).send(myYelp);
-// //     })
-// // }
-
-// // function Yelp(dataOfYelp) {
-// //   this.name = dataOfYelp.name;
-// //   this.image_url = dataOfYelp.image_url;
-// //   this.price = dataOfYelp.price;
-// //   this.rating = dataOfYelp.rating;
-// //   this.url = dataOfYelp.url;
-// //   this.created_at = Date.now();
-// // }
+// });
+// function Location(city,geoData) {
+//     this.search_query = city;
+//     this.formatted_query = geoData[0].display_name;
+//     this.latitude = geoData[0].lat;
+//     this.longitude = geoData[0].lon;
+// }
 
 
 
-// // https://www.hikingproject.com/data/get-trails?lat=40.0274&lon=-105.2519&maxDistance=10&key=200828484-8e942c0cf63c9f3c879c0e7e976b713b
-// app.get('*', (req, res) => {
-//   res.status(404).send('Whoops(404)-something went wrong')
+
+/////////////////geo2.json//////////////////////
+// app.get('/location',(req,res)=> {
+//     const geoData = require('./data/geo2.json');
+//     const city = req.query.data;
+//     // console.log(city);
+//     console.log(geoData.results[0])
+//     let locationData = new Location (city,geoData);
+//     res.send(locationData);
+
 // });
 
-// app.get((error, req, res) => {
-//   res.status(500).send('Sorry, something went wrong')
-// });
+// function Location(city,geoData) {
+//     this.search_query = city;
+//     this.formatted_query = geoData.results[0].formatted_address;
+//     this.latitude = geoData.results[0].geometry.location.lat;
+//     this.longitude = geoData.results[0].geometry.location.lng;
+// }
 
 
-////////////////////////////////////////
-notclint.connect()
-  .then(()=>{
-  
-    app.listen(PORT, () => {
-      console.log(`listening on port ${PORT}`);
-    });
+app.use('*', (req, res) => {
+    res.status(404).send('Not Found');
+});
 
-  })
+app.use((error, req, res) => {
+    res.status(500).send(error);
+});
 
-
-  // psql -d city_explorer -f schema.sql
+client.connect()
+    .then(() => {
+        app.listen(PORT, () => {
+            console.log(`Listening to port ${PORT}`);
+        })
+    })
